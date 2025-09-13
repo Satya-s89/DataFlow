@@ -1,68 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, addDoc, onSnapshot, collection, query, deleteDoc } from 'firebase/firestore';
-
-// DO NOT TOUCH: Global variables provided by the environment
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
 
 const App = () => {
     const [entries, setEntries] = useState([]);
     const [formInput, setFormInput] = useState({ name: '', email: '', phone: '', city: '' });
     const [statusMessage, setStatusMessage] = useState('');
-    const [userId, setUserId] = useState(null);
-    const [isLoading, setIsLoading] = useState(true);
 
-    // Effect to handle Firebase authentication and data fetching
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setUserId(user.uid);
-                // Listen for real-time data changes. Removed orderBy to prevent Firestore index errors.
-                const q = query(collection(db, `artifacts/${appId}/users/${user.uid}/entries`));
-                
-                const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-                    const data = [];
-                    snapshot.forEach((doc) => {
-                        data.push({ id: doc.id, ...doc.data() });
-                    });
-                    setEntries(data);
-                    setIsLoading(false);
-                }, (error) => {
-                    console.error("Error listening to Firestore changes:", error);
-                    setIsLoading(false);
-                });
-
-                return () => unsubscribeSnapshot();
-            } else {
-                setUserId(null);
-                setIsLoading(false);
-            }
-        });
-
-        // Sign in with custom token or anonymously
-        const handleAuth = async () => {
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Firebase auth failed:", error);
-            }
-        };
-
-        handleAuth();
-
-        return () => unsubscribe();
+        const saved = localStorage.getItem('entries');
+        if (saved) {
+            setEntries(JSON.parse(saved));
+        }
     }, []);
 
     const handleChange = (e) => {
@@ -70,41 +17,32 @@ const App = () => {
         setFormInput(prev => ({ ...prev, [name]: value }));
     };
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
         const { name, email, phone, city } = formInput;
         if (!name.trim() && !email.trim() && !phone.trim() && !city.trim()) {
-            // Do not add empty entries
-            return;
-        }
-
-        if (!userId) {
-            console.error("User ID is not available.");
             return;
         }
         
-        try {
-            // Add a new document to Firestore
-            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
-                ...formInput,
-                createdAt: new Date(),
-            });
-            setFormInput({ name: '', email: '', phone: '', city: '' });
-        } catch (error) {
-            console.error("Error adding document:", error);
-        }
+        const newEntry = {
+            id: Date.now(),
+            ...formInput,
+            createdAt: new Date().toISOString()
+        };
+        
+        const newEntries = [...entries, newEntry];
+        setEntries(newEntries);
+        localStorage.setItem('entries', JSON.stringify(newEntries));
+        setFormInput({ name: '', email: '', phone: '', city: '' });
     };
 
-    const handleDelete = async (id) => {
-        try {
-            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/entries`, id));
-        } catch (error) {
-            console.error("Error deleting document:", error);
-        }
+    const handleDelete = (id) => {
+        const newEntries = entries.filter(entry => entry.id !== id);
+        setEntries(newEntries);
+        localStorage.setItem('entries', JSON.stringify(newEntries));
     };
 
     const handleCopy = () => {
-        // More robust way to generate a CSV string
         const header = ['"Full Name"', '"Email Address"', '"Phone Number"', '"City"'].join(',');
         const rows = entries.map(item => [
             `"${(item.name || '').replace(/"/g, '""')}"`,
@@ -114,51 +52,23 @@ const App = () => {
         ].join(',')).join('\n');
         
         const dataToCopy = header + '\n' + rows;
-
-        const tempTextarea = document.createElement('textarea');
-        tempTextarea.value = dataToCopy;
-        // Make the textarea invisible but selectable
-        tempTextarea.style.position = 'absolute';
-        tempTextarea.style.left = '-9999px';
-        document.body.appendChild(tempTextarea);
-        tempTextarea.focus();
-        tempTextarea.select();
-
-        try {
-            document.execCommand('copy');
+        navigator.clipboard.writeText(dataToCopy).then(() => {
             setStatusMessage('Data copied to clipboard!');
             setTimeout(() => setStatusMessage(''), 2000);
-        } catch (err) {
-            console.error('Failed to copy text: ', err);
-        } finally {
-            document.body.removeChild(tempTextarea);
-        }
+        });
     };
-
-    if (isLoading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-gray-600 text-lg">Loading...</div>
-            </div>
-        );
-    }
 
     return (
         <div className="p-4 sm:p-8 flex items-center justify-center min-h-screen">
             <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-10 w-full max-w-2xl border border-gray-200">
                 
-                {/* Title and User ID */}
                 <div className="text-center mb-8">
                     <h1 className="text-3xl sm:text-4xl font-bold text-gray-800 mb-2">Data Entry Assistant</h1>
                     <p className="text-gray-600 text-sm sm:text-base mb-2">
                         Easily input and organize data. This tool saves your progress automatically.
                     </p>
-                    <div className="bg-gray-100 text-gray-500 text-xs px-3 py-1 rounded-full inline-block font-mono break-all">
-                        User ID: {userId || 'N/A'}
-                    </div>
                 </div>
 
-                {/* Data Entry Form */}
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
@@ -187,7 +97,6 @@ const App = () => {
                     </button>
                 </form>
 
-                {/* Data Display Section */}
                 <div className="mt-8">
                     <div className="flex justify-between items-center mb-4">
                         <h2 className="text-2xl font-bold text-gray-800">Collected Data</h2>
@@ -227,7 +136,6 @@ const App = () => {
                     </div>
                 </div>
 
-                {/* Info/Status Message Box */}
                 {statusMessage && (
                     <div className="fixed top-8 left-1/2 -translate-x-1/2 transition-opacity duration-300">
                         <div className="bg-gray-800 text-white text-sm py-2 px-4 rounded-full shadow-lg">
