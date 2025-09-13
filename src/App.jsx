@@ -1,35 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, addDoc, onSnapshot, collection, query, deleteDoc, setDoc, getDocs } from 'firebase/firestore';
-
-// DO NOT TOUCH: Global variables provided by the environment
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-  apiKey: "demo-key",
-  authDomain: "demo-project.firebaseapp.com",
-  projectId: "demo-project",
-  storageBucket: "demo-project.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef123456"
-};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-// Initialize Firebase
-let app, db, auth;
-try {
-  app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  auth = getAuth(app);
-} catch (error) {
-  console.error('Firebase initialization failed:', error);
-}
 
 const App = () => {
     const [entries, setEntries] = useState([]);
     const [formInput, setFormInput] = useState({});
     const [statusMessage, setStatusMessage] = useState('');
-    const [userId, setUserId] = useState(null);
+    const [userId, setUserId] = useState('local-user');
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [sortField, setSortField] = useState('');
@@ -39,106 +14,19 @@ const App = () => {
     const [entryToDelete, setEntryToDelete] = useState(null);
     const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
     const [editingId, setEditingId] = useState(null);
-    const [showExportMenu, setShowExportMenu] = useState(false);
-    const [showApiConfig, setShowApiConfig] = useState(false);
-    const [apiKeys, setApiKeys] = useState({
-        googleSheets: localStorage.getItem('googleSheetsKey') || '',
-        airtable: localStorage.getItem('airtableKey') || '',
-        notion: localStorage.getItem('notionKey') || '',
-    });
 
-    // Effect to handle Firebase authentication and data fetching
     useEffect(() => {
-        if (!auth || !db) {
-            // Fallback to localStorage if Firebase fails
-            console.log('Firebase not available, using localStorage');
-            setUserId('local-user');
-            const saved = localStorage.getItem('entries');
-            if (saved) {
-                try {
-                    const data = JSON.parse(saved);
-                    setEntries(data);
-                    updateColumns(data);
-                } catch (error) {
-                    console.error('Error loading saved data:', error);
-                }
-            }
-            setIsLoading(false);
-            return;
-        }
-
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setUserId(user.uid);
-                try {
-                    // Listen for real-time data changes
-                    const entriesCollection = collection(db, `artifacts/${appId}/users/${user.uid}/entries`);
-                    const unsubscribeSnapshot = onSnapshot(entriesCollection, (snapshot) => {
-                        const data = [];
-                        snapshot.forEach((doc) => {
-                            data.push({ id: doc.id, ...doc.data() });
-                        });
-                        
-                        // Update columns based on current data
-                        updateColumns(data);
-                        setEntries(data);
-                        setIsLoading(false);
-                    }, (error) => {
-                        console.error("Error listening to Firestore changes:", error);
-                        // Fallback to localStorage
-                        const saved = localStorage.getItem('entries');
-                        if (saved) {
-                            try {
-                                const data = JSON.parse(saved);
-                                setEntries(data);
-                                updateColumns(data);
-                            } catch (error) {
-                                console.error('Error loading saved data:', error);
-                            }
-                        }
-                        setIsLoading(false);
-                    });
-
-                    return () => unsubscribeSnapshot();
-                } catch (error) {
-                    console.error('Firestore setup failed:', error);
-                    setIsLoading(false);
-                }
-            } else {
-                setUserId(null);
-                setIsLoading(false);
-            }
-        });
-
-        // Sign in with custom token or anonymously
-        const handleAuth = async () => {
+        const saved = localStorage.getItem('entries');
+        if (saved) {
             try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                const data = JSON.parse(saved);
+                setEntries(data);
+                updateColumns(data);
             } catch (error) {
-                console.error("Firebase auth failed:", error);
-                // Set local user ID as fallback
-                setUserId('local-user');
-                const saved = localStorage.getItem('entries');
-                if (saved) {
-                    try {
-                        const data = JSON.parse(saved);
-                        setEntries(data);
-                        updateColumns(data);
-                    } catch (error) {
-                        console.error('Error loading saved data:', error);
-                    }
-                }
-                setIsLoading(false);
+                console.error('Error loading saved data:', error);
             }
-        };
-
-        handleAuth();
-
-        return () => unsubscribe();
+        }
+        setIsLoading(false);
     }, []);
 
     const updateColumns = (data) => {
@@ -177,18 +65,13 @@ const App = () => {
         }
     };
 
-    const saveApiKey = (platform, key) => {
+    const saveToStorage = (data) => {
         try {
-            localStorage.setItem(`${platform}Key`, key);
-            setApiKeys(prev => ({ ...prev, [platform]: key }));
+            localStorage.setItem('entries', JSON.stringify(data));
+            updateColumns(data);
         } catch (error) {
-            console.error('Error saving API key:', error);
+            console.error('Error saving to localStorage:', error);
         }
-    };
-
-    const showMessage = (message, duration = 3000) => {
-        setStatusMessage(message);
-        setTimeout(() => setStatusMessage(''), duration);
     };
 
     const handleChange = (e) => {
@@ -204,81 +87,52 @@ const App = () => {
                 const newColumns = [...columns, { key, label: fieldName.trim() }];
                 setColumns(newColumns);
                 setFormInput(prev => ({ ...prev, [key]: '' }));
-                showMessage(`✅ Field "${fieldName.trim()}" added!`);
-            } else {
-                showMessage('❌ Invalid field name or field already exists');
+                setStatusMessage(`✅ Field "${fieldName.trim()}" added!`);
+                setTimeout(() => setStatusMessage(''), 2000);
             }
         }
     };
 
-    const saveToStorage = (data) => {
-        try {
-            localStorage.setItem('entries', JSON.stringify(data));
-            updateColumns(data);
-        } catch (error) {
-            console.error('Error saving to localStorage:', error);
-        }
-    };
-
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
         const hasData = Object.values(formInput).some(value => value && value.toString().trim());
         if (!hasData) {
-            showMessage('❌ Please enter some data');
-            return;
-        }
-        if (!userId) {
-            console.error("User ID is not available.");
+            setStatusMessage('❌ Please enter some data');
+            setTimeout(() => setStatusMessage(''), 2000);
             return;
         }
         
         try {
-            if (userId === 'local-user' || !db) {
-                // Use localStorage fallback
-                if (editingId) {
-                    const newEntries = entries.map(entry => 
-                        entry.id === editingId 
-                            ? { ...entry, ...formInput, updatedAt: new Date().toISOString() }
-                            : entry
-                    );
-                    setEntries(newEntries);
-                    saveToStorage(newEntries);
-                    setEditingId(null);
-                    showMessage('✅ Entry updated successfully!');
-                } else {
-                    const newEntry = {
-                        id: Date.now() + Math.random(),
-                        ...formInput,
-                        createdAt: new Date().toISOString()
-                    };
-                    const newEntries = [...entries, newEntry];
-                    setEntries(newEntries);
-                    saveToStorage(newEntries);
-                    showMessage('✅ Entry added successfully!');
-                }
+            if (editingId) {
+                const newEntries = entries.map(entry => 
+                    entry.id === editingId 
+                        ? { ...entry, ...formInput, updatedAt: new Date().toISOString() }
+                        : entry
+                );
+                setEntries(newEntries);
+                saveToStorage(newEntries);
+                setEditingId(null);
+                setStatusMessage('✅ Entry updated!');
             } else {
-                // Use Firebase
-                if (editingId) {
-                    const entryDocRef = doc(db, `artifacts/${appId}/users/${userId}/entries`, editingId);
-                    await setDoc(entryDocRef, { ...formInput, updatedAt: new Date().toISOString() }, { merge: true });
-                    setEditingId(null);
-                    showMessage('✅ Entry updated successfully!');
-                } else {
-                    await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
-                        ...formInput,
-                        createdAt: new Date().toISOString(),
-                    });
-                    showMessage('✅ Entry added successfully!');
-                }
+                const newEntry = {
+                    id: Date.now() + Math.random(),
+                    ...formInput,
+                    createdAt: new Date().toISOString()
+                };
+                const newEntries = [...entries, newEntry];
+                setEntries(newEntries);
+                saveToStorage(newEntries);
+                setStatusMessage('✅ Entry added!');
             }
-        } catch (error) {
-            console.error("Error saving document:", error);
-            showMessage('❌ Error saving entry!');
-        } finally {
+            
             const emptyForm = {};
             columns.forEach(col => { emptyForm[col.key] = ''; });
             setFormInput(emptyForm);
+        } catch (error) {
+            console.error('Error saving entry:', error);
+            setStatusMessage('❌ Error saving entry!');
         }
+        setTimeout(() => setStatusMessage(''), 2000);
     };
 
     const handleEdit = (entry) => {
@@ -286,7 +140,6 @@ const App = () => {
         columns.forEach(col => { editForm[col.key] = entry[col.key] || ''; });
         setFormInput(editForm);
         setEditingId(entry.id);
-        showMessage('✏️ Editing mode activated');
     };
 
     const handleCancelEdit = () => {
@@ -294,7 +147,6 @@ const App = () => {
         columns.forEach(col => { emptyForm[col.key] = ''; });
         setFormInput(emptyForm);
         setEditingId(null);
-        showMessage('❌ Edit cancelled');
     };
 
     const handleDelete = (id) => {
@@ -302,56 +154,38 @@ const App = () => {
         setShowDeleteModal(true);
     };
 
-    const confirmDelete = async () => {
+    const confirmDelete = () => {
         try {
-            if (userId === 'local-user' || !db) {
-                // Use localStorage fallback
-                const newEntries = entries.filter(entry => entry.id !== entryToDelete);
-                setEntries(newEntries);
-                saveToStorage(newEntries);
-                showMessage('✅ Entry deleted successfully!');
-            } else {
-                // Use Firebase
-                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/entries`, entryToDelete));
-                showMessage('✅ Entry deleted successfully!');
-            }
+            const newEntries = entries.filter(entry => entry.id !== entryToDelete);
+            setEntries(newEntries);
+            saveToStorage(newEntries);
+            setStatusMessage('✅ Entry deleted!');
         } catch (error) {
-            console.error("Error deleting document:", error);
-            showMessage('❌ Error deleting entry!');
-        } finally {
-            setShowDeleteModal(false);
-            setEntryToDelete(null);
+            console.error('Error deleting entry:', error);
+            setStatusMessage('❌ Error deleting entry!');
         }
+        setShowDeleteModal(false);
+        setEntryToDelete(null);
+        setTimeout(() => setStatusMessage(''), 2000);
     };
 
     const handleClearAll = () => {
         setShowDeleteAllModal(true);
     };
 
-    const confirmClearAll = async () => {
-        if (!userId) return;
+    const confirmClearAll = () => {
         try {
-            if (userId === 'local-user' || !db) {
-                // Use localStorage fallback
-                setEntries([]);
-                setColumns([]);
-                setFormInput({});
-                localStorage.removeItem('entries');
-                showMessage('✅ All entries cleared successfully!');
-            } else {
-                // Use Firebase
-                const q = query(collection(db, `artifacts/${appId}/users/${userId}/entries`));
-                const snapshot = await getDocs(q);
-                const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
-                await Promise.all(deletePromises);
-                showMessage('✅ All entries cleared successfully!');
-            }
+            setEntries([]);
+            setColumns([]);
+            setFormInput({});
+            localStorage.removeItem('entries');
+            setStatusMessage('✅ All entries cleared!');
         } catch (error) {
-            console.error("Error clearing all entries:", error);
-            showMessage('❌ Error clearing entries!');
-        } finally {
-            setShowDeleteAllModal(false);
+            console.error('Error clearing entries:', error);
+            setStatusMessage('❌ Error clearing entries!');
         }
+        setShowDeleteAllModal(false);
+        setTimeout(() => setStatusMessage(''), 2000);
     };
 
     const handleSort = (field) => {
@@ -375,208 +209,74 @@ const App = () => {
         });
 
     const generateCSV = () => {
-        try {
-            const header = columns.map(col => `"${col.label}"`).join(',');
-            const rows = filteredAndSortedEntries.map(item => 
-                columns.map(col => {
-                    const value = (item[col.key] || '').toString().replace(/"/g, '""');
-                    return `"${value}"`;
-                }).join(',')
-            ).join('\n');
-            return header + '\n' + rows;
-        } catch (error) {
-            console.error('Error generating CSV:', error);
-            return '';
-        }
-    };
-
-    const downloadFile = (content, filename, type) => {
-        try {
-            const blob = new Blob([content], { type });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            return true;
-        } catch (error) {
-            console.error('Error downloading file:', error);
-            return false;
-        }
-    };
-
-    const exportToGoogleSheets = () => {
-        try {
-            const csvData = generateCSV();
-            const encodedData = encodeURIComponent(csvData);
-            const url = `https://docs.google.com/spreadsheets/create?usp=drive_web&csv=${encodedData}`;
-            window.open(url, '_blank');
-            showMessage('✅ Google Sheet created! Check your new tab.');
-        } catch (error) {
-            console.error('Google Sheets export error:', error);
-            showMessage('❌ Google Sheets export failed');
-        }
-    };
-
-    const exportToAirtable = () => {
-        try {
-            const jsonData = JSON.stringify(filteredAndSortedEntries, null, 2);
-            navigator.clipboard.writeText(jsonData).then(() => {
-                window.open('https://airtable.com/create/table', '_blank');
-                showMessage('✅ Data copied to clipboard! Paste in Airtable.');
-            }).catch(() => {
-                downloadFile(jsonData, 'airtable-data.json', 'application/json');
-                window.open('https://airtable.com/create/table', '_blank');
-                showMessage('✅ Data downloaded! Import the JSON file in Airtable.');
-            });
-        } catch (error) {
-            console.error('Airtable export error:', error);
-            showMessage('❌ Airtable export failed');
-        }
-    };
-
-    const exportToNotion = () => {
-        try {
-            const csvData = generateCSV();
-            navigator.clipboard.writeText(csvData).then(() => {
-                window.open('https://www.notion.so/import', '_blank');
-                showMessage('✅ CSV data copied! Paste in Notion import page.');
-            }).catch(() => {
-                downloadFile(csvData, 'notion-data.csv', 'text/csv');
-                window.open('https://www.notion.so/import', '_blank');
-                showMessage('✅ CSV downloaded! Import the file in Notion.');
-            });
-        } catch (error) {
-            console.error('Notion export error:', error);
-            showMessage('❌ Notion export failed');
-        }
-    };
-
-    const exportToWebhook = async () => {
-        const webhookUrl = prompt('Enter webhook URL:');
-        if (!webhookUrl) return;
-
-        try {
-            showMessage('🔗 Sending to webhook...');
-            
-            const response = await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: JSON.stringify({
-                    data: filteredAndSortedEntries,
-                    columns: columns,
-                    timestamp: new Date().toISOString(),
-                    total: filteredAndSortedEntries.length
-                })
-            });
-
-            if (response.ok) {
-                showMessage('✅ Data sent to webhook successfully!');
-            } else {
-                throw new Error(`HTTP ${response.status}`);
-            }
-        } catch (error) {
-            console.error('Webhook export error:', error);
-            showMessage('❌ Webhook export failed. Check URL and try again.');
-        }
+        const header = columns.map(col => `"${col.label}"`).join(',');
+        const rows = filteredAndSortedEntries.map(item => 
+            columns.map(col => `"${(item[col.key] || '').toString().replace(/"/g, '""')}"`).join(',')
+        ).join('\n');
+        return header + '\n' + rows;
     };
 
     const handleExport = (format) => {
         if (entries.length === 0) {
-            showMessage('❌ No data to export');
+            setStatusMessage('❌ No data to export!');
+            setTimeout(() => setStatusMessage(''), 2000);
             return;
         }
         
-        try {
-            let content, filename, type;
-            
-            if (format === 'csv') {
-                content = generateCSV();
-                filename = `data-export-${new Date().toISOString().split('T')[0]}.csv`;
-                type = 'text/csv';
-            } else {
-                content = JSON.stringify(filteredAndSortedEntries, null, 2);
-                filename = `data-export-${new Date().toISOString().split('T')[0]}.json`;
-                type = 'application/json';
-            }
-            
-            if (downloadFile(content, filename, type)) {
-                showMessage(`✅ ${format.toUpperCase()} file downloaded successfully!`);
-            } else {
-                showMessage(`❌ Failed to download ${format.toUpperCase()} file`);
-            }
-        } catch (error) {
-            console.error('Export error:', error);
-            showMessage(`❌ Export failed`);
+        let content, filename, type;
+        
+        if (format === 'csv') {
+            content = generateCSV();
+            filename = 'data-entries.csv';
+            type = 'text/csv';
+        } else {
+            content = JSON.stringify(filteredAndSortedEntries, null, 2);
+            filename = 'data-entries.json';
+            type = 'application/json';
         }
+        
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        setStatusMessage(`✅ Exported as ${format.toUpperCase()}!`);
+        setTimeout(() => setStatusMessage(''), 2000);
     };
 
-    const handleImport = async (e) => {
+    const handleImport = (e) => {
         const file = e.target.files[0];
         if (!file) return;
         
         const reader = new FileReader();
-        reader.onload = async (event) => {
+        reader.onload = (event) => {
             try {
                 const data = JSON.parse(event.target.result);
-                if (Array.isArray(data) && userId) {
-                    let imported = 0;
-                    if (userId === 'local-user' || !db) {
-                        // Use localStorage fallback
-                        const importedEntries = data.map(item => ({
-                            ...item,
-                            id: Date.now() + Math.random(),
-                            importedAt: new Date().toISOString()
-                        }));
-                        const newEntries = [...entries, ...importedEntries];
-                        setEntries(newEntries);
-                        saveToStorage(newEntries);
-                        imported = importedEntries.length;
-                    } else {
-                        // Use Firebase
-                        for (const item of data) {
-                            const sanitizedItem = Object.fromEntries(
-                                Object.entries(item).filter(([key, value]) => 
-                                    key !== 'id' && (typeof value === 'string' || typeof value === 'number')
-                                )
-                            );
-                            if (Object.keys(sanitizedItem).length > 0) {
-                                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
-                                    ...sanitizedItem,
-                                    importedAt: new Date().toISOString()
-                                });
-                                imported++;
-                            }
-                        }
-                    }
-                    showMessage(`✅ Successfully imported ${imported} entries!`);
+                if (Array.isArray(data)) {
+                    const importedEntries = data.map(item => ({
+                        ...item,
+                        id: Date.now() + Math.random(),
+                        importedAt: new Date().toISOString()
+                    }));
+                    const newEntries = [...entries, ...importedEntries];
+                    setEntries(newEntries);
+                    saveToStorage(newEntries);
+                    setStatusMessage(`✅ Imported ${data.length} entries!`);
                 } else {
-                    showMessage('❌ Import failed - invalid file format!');
+                    setStatusMessage('❌ Import failed - invalid file format!');
                 }
             } catch (error) {
-                console.error("Import failed:", error);
-                showMessage('❌ Import failed - invalid JSON format');
+                console.error('Import failed:', error);
+                setStatusMessage('❌ Import failed - invalid JSON format!');
             }
-        };
-        reader.onerror = () => {
-            showMessage('❌ Error reading file');
+            setTimeout(() => setStatusMessage(''), 2000);
         };
         reader.readAsText(file);
         e.target.value = '';
     };
-
-    const exportOptions = [
-        { name: 'Google Sheets', icon: '📊', action: exportToGoogleSheets, color: 'bg-green-600' },
-        { name: 'Airtable', icon: '🗃️', action: exportToAirtable, color: 'bg-orange-600' },
-        { name: 'Notion', icon: '📝', action: exportToNotion, color: 'bg-gray-700' },
-        { name: 'Custom Webhook', icon: '🔗', action: exportToWebhook, color: 'bg-purple-600' },
-    ];
 
     if (isLoading) {
         return (
@@ -593,7 +293,7 @@ const App = () => {
                 <div className="text-center mb-8">
                     <h1 className="text-4xl sm:text-5xl font-bold text-gray-800 mb-2">🚀 Advanced Data Entry Assistant</h1>
                     <p className="text-gray-600 text-sm sm:text-base mb-4">
-                        Easily input, manage, and export your data with cloud-based storage.
+                        Easily input, manage, and export your data with local storage.
                     </p>
                     <div className="flex justify-center gap-2 text-sm text-gray-500">
                         <span>📝 {entries.length} entries</span>
@@ -623,7 +323,7 @@ const App = () => {
                             </div>
                         ))}
                         
-                        <div className="md:col-span-2 lg:col-span-3 flex gap-2 flex-wrap">
+                        <div className="md:col-span-2 lg:col-span-3 flex gap-2">
                             <button type="submit"
                                 className="flex-1 bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
                                 {editingId ? '✏️ Update Entry' : '➕ Add Entry'}
@@ -631,10 +331,6 @@ const App = () => {
                             <button type="button" onClick={addNewField}
                                 className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
                                 ➕ Add Field
-                            </button>
-                            <button type="button" onClick={() => setShowApiConfig(true)}
-                                className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">
-                                🔑 API Keys
                             </button>
                             {editingId && (
                                 <button type="button" onClick={handleCancelEdit}
@@ -650,7 +346,7 @@ const App = () => {
                     <div className="text-center py-12 bg-gray-50 rounded-xl mb-8">
                         <h3 className="text-xl font-semibold text-gray-700 mb-4">🚀 Get Started</h3>
                         <p className="text-gray-600 mb-6">Add your first field to begin</p>
-                        <div className="flex justify-center gap-4 flex-wrap">
+                        <div className="flex justify-center gap-4">
                             <button onClick={addNewField}
                                 className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                                 ➕ Add First Field
@@ -679,37 +375,12 @@ const App = () => {
                             <div className="flex gap-2 flex-wrap">
                                 <button onClick={() => handleExport('csv')}
                                         className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm">
-                                    📄 CSV
+                                    📄 Export CSV
                                 </button>
                                 <button onClick={() => handleExport('json')}
                                         className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm">
-                                    📋 JSON
+                                    📋 Export JSON
                                 </button>
-                                <div className="relative">
-                                    <button onClick={() => setShowExportMenu(!showExportMenu)}
-                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm">
-                                        🚀 Export To Platform
-                                    </button>
-                                    {showExportMenu && (
-                                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
-                                            <div className="p-2">
-                                                <h3 className="text-sm font-semibold text-gray-700 mb-2 px-2">Export Destinations</h3>
-                                                {exportOptions.map((option, index) => (
-                                                    <button
-                                                        key={index}
-                                                        onClick={() => {
-                                                            option.action();
-                                                            setShowExportMenu(false);
-                                                        }}
-                                                        className={`w-full text-left px-3 py-2 text-sm text-white rounded-lg mb-1 hover:opacity-90 transition-opacity ${option.color}`}
-                                                    >
-                                                        {option.icon} {option.name}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
                                 <label className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors cursor-pointer text-sm">
                                     📥 Import
                                     <input type="file" accept=".json" onChange={handleImport} className="hidden" />
@@ -763,13 +434,6 @@ const App = () => {
                                                 </td>
                                             </tr>
                                         )}
-                                        {entries.length === 0 && (
-                                            <tr>
-                                                <td colSpan={columns.length + 1} className="px-4 py-8 text-center text-gray-500">
-                                                    📝 No entries yet - add your first entry above!
-                                                </td>
-                                            </tr>
-                                        )}
                                     </tbody>
                                 </table>
                             </div>
@@ -816,63 +480,6 @@ const App = () => {
                         </div>
                     </div>
                 )}
-
-                {/* API Configuration Modal */}
-                {showApiConfig && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                        <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-                            <h3 className="text-lg font-semibold mb-4">🔑 API Configuration</h3>
-                            
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Google Sheets API Key</label>
-                                    <input
-                                        type="password"
-                                        value={apiKeys.googleSheets}
-                                        onChange={(e) => saveApiKey('googleSheets', e.target.value)}
-                                        placeholder="Enter Google Sheets API key"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                                
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Airtable API Key</label>
-                                    <input
-                                        type="password"
-                                        value={apiKeys.airtable}
-                                        onChange={(e) => saveApiKey('airtable', e.target.value)}
-                                        placeholder="Enter Airtable API key"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                                
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Notion API Key</label>
-                                    <input
-                                        type="password"
-                                        value={apiKeys.notion}
-                                        onChange={(e) => saveApiKey('notion', e.target.value)}
-                                        placeholder="Enter Notion integration token"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                            </div>
-                            
-                            <div className="flex gap-2 mt-6">
-                                <button
-                                    onClick={() => setShowApiConfig(false)}
-                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                                >
-                                    Save & Close
-                                </button>
-                            </div>
-                            
-                            <p className="text-xs text-gray-500 mt-3">
-                                API keys are stored securely in your browser for privacy.
-                            </p>
-                        </div>
-                    </div>
-                )}
                 
                 {statusMessage && (
                     <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
@@ -880,10 +487,6 @@ const App = () => {
                             {statusMessage}
                         </div>
                     </div>
-                )}
-
-                {showExportMenu && (
-                    <div className="fixed inset-0 bg-black bg-opacity-25 z-40" onClick={() => setShowExportMenu(false)}></div>
                 )}
 
                 <div className="text-center mt-6 text-xs text-gray-400">
