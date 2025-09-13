@@ -16,9 +16,14 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+let app, db, auth;
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+} catch (error) {
+  console.error('Firebase initialization failed:', error);
+}
 
 const App = () => {
     const [entries, setEntries] = useState([]);
@@ -44,27 +49,61 @@ const App = () => {
 
     // Effect to handle Firebase authentication and data fetching
     useEffect(() => {
+        if (!auth || !db) {
+            // Fallback to localStorage if Firebase fails
+            console.log('Firebase not available, using localStorage');
+            setUserId('local-user');
+            const saved = localStorage.getItem('entries');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    setEntries(data);
+                    updateColumns(data);
+                } catch (error) {
+                    console.error('Error loading saved data:', error);
+                }
+            }
+            setIsLoading(false);
+            return;
+        }
+
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 setUserId(user.uid);
-                // Listen for real-time data changes
-                const entriesCollection = collection(db, `artifacts/${appId}/users/${user.uid}/entries`);
-                const unsubscribeSnapshot = onSnapshot(entriesCollection, (snapshot) => {
-                    const data = [];
-                    snapshot.forEach((doc) => {
-                        data.push({ id: doc.id, ...doc.data() });
+                try {
+                    // Listen for real-time data changes
+                    const entriesCollection = collection(db, `artifacts/${appId}/users/${user.uid}/entries`);
+                    const unsubscribeSnapshot = onSnapshot(entriesCollection, (snapshot) => {
+                        const data = [];
+                        snapshot.forEach((doc) => {
+                            data.push({ id: doc.id, ...doc.data() });
+                        });
+                        
+                        // Update columns based on current data
+                        updateColumns(data);
+                        setEntries(data);
+                        setIsLoading(false);
+                    }, (error) => {
+                        console.error("Error listening to Firestore changes:", error);
+                        // Fallback to localStorage
+                        const saved = localStorage.getItem('entries');
+                        if (saved) {
+                            try {
+                                const data = JSON.parse(saved);
+                                setEntries(data);
+                                updateColumns(data);
+                            } catch (error) {
+                                console.error('Error loading saved data:', error);
+                            }
+                        }
+                        setIsLoading(false);
                     });
-                    
-                    // Update columns based on current data
-                    updateColumns(data);
-                    setEntries(data);
-                    setIsLoading(false);
-                }, (error) => {
-                    console.error("Error listening to Firestore changes:", error);
-                    setIsLoading(false);
-                });
 
-                return () => unsubscribeSnapshot();
+                    return () => unsubscribeSnapshot();
+                } catch (error) {
+                    console.error('Firestore setup failed:', error);
+                    setIsLoading(false);
+                }
             } else {
                 setUserId(null);
                 setIsLoading(false);
@@ -81,6 +120,18 @@ const App = () => {
                 }
             } catch (error) {
                 console.error("Firebase auth failed:", error);
+                // Set local user ID as fallback
+                setUserId('local-user');
+                const saved = localStorage.getItem('entries');
+                if (saved) {
+                    try {
+                        const data = JSON.parse(saved);
+                        setEntries(data);
+                        updateColumns(data);
+                    } catch (error) {
+                        console.error('Error loading saved data:', error);
+                    }
+                }
                 setIsLoading(false);
             }
         };
@@ -160,6 +211,15 @@ const App = () => {
         }
     };
 
+    const saveToStorage = (data) => {
+        try {
+            localStorage.setItem('entries', JSON.stringify(data));
+            updateColumns(data);
+        } catch (error) {
+            console.error('Error saving to localStorage:', error);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         const hasData = Object.values(formInput).some(value => value && value.toString().trim());
@@ -173,19 +233,43 @@ const App = () => {
         }
         
         try {
-            if (editingId) {
-                // Update existing document in Firestore
-                const entryDocRef = doc(db, `artifacts/${appId}/users/${userId}/entries`, editingId);
-                await setDoc(entryDocRef, { ...formInput, updatedAt: new Date().toISOString() }, { merge: true });
-                setEditingId(null);
-                showMessage('✅ Entry updated successfully!');
+            if (userId === 'local-user' || !db) {
+                // Use localStorage fallback
+                if (editingId) {
+                    const newEntries = entries.map(entry => 
+                        entry.id === editingId 
+                            ? { ...entry, ...formInput, updatedAt: new Date().toISOString() }
+                            : entry
+                    );
+                    setEntries(newEntries);
+                    saveToStorage(newEntries);
+                    setEditingId(null);
+                    showMessage('✅ Entry updated successfully!');
+                } else {
+                    const newEntry = {
+                        id: Date.now() + Math.random(),
+                        ...formInput,
+                        createdAt: new Date().toISOString()
+                    };
+                    const newEntries = [...entries, newEntry];
+                    setEntries(newEntries);
+                    saveToStorage(newEntries);
+                    showMessage('✅ Entry added successfully!');
+                }
             } else {
-                // Add a new document to Firestore
-                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
-                    ...formInput,
-                    createdAt: new Date().toISOString(),
-                });
-                showMessage('✅ Entry added successfully!');
+                // Use Firebase
+                if (editingId) {
+                    const entryDocRef = doc(db, `artifacts/${appId}/users/${userId}/entries`, editingId);
+                    await setDoc(entryDocRef, { ...formInput, updatedAt: new Date().toISOString() }, { merge: true });
+                    setEditingId(null);
+                    showMessage('✅ Entry updated successfully!');
+                } else {
+                    await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
+                        ...formInput,
+                        createdAt: new Date().toISOString(),
+                    });
+                    showMessage('✅ Entry added successfully!');
+                }
             }
         } catch (error) {
             console.error("Error saving document:", error);
@@ -220,8 +304,17 @@ const App = () => {
 
     const confirmDelete = async () => {
         try {
-            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/entries`, entryToDelete));
-            showMessage('✅ Entry deleted successfully!');
+            if (userId === 'local-user' || !db) {
+                // Use localStorage fallback
+                const newEntries = entries.filter(entry => entry.id !== entryToDelete);
+                setEntries(newEntries);
+                saveToStorage(newEntries);
+                showMessage('✅ Entry deleted successfully!');
+            } else {
+                // Use Firebase
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/entries`, entryToDelete));
+                showMessage('✅ Entry deleted successfully!');
+            }
         } catch (error) {
             console.error("Error deleting document:", error);
             showMessage('❌ Error deleting entry!');
@@ -238,11 +331,21 @@ const App = () => {
     const confirmClearAll = async () => {
         if (!userId) return;
         try {
-            const q = query(collection(db, `artifacts/${appId}/users/${userId}/entries`));
-            const snapshot = await getDocs(q);
-            const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
-            await Promise.all(deletePromises);
-            showMessage('✅ All entries cleared successfully!');
+            if (userId === 'local-user' || !db) {
+                // Use localStorage fallback
+                setEntries([]);
+                setColumns([]);
+                setFormInput({});
+                localStorage.removeItem('entries');
+                showMessage('✅ All entries cleared successfully!');
+            } else {
+                // Use Firebase
+                const q = query(collection(db, `artifacts/${appId}/users/${userId}/entries`));
+                const snapshot = await getDocs(q);
+                const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
+                await Promise.all(deletePromises);
+                showMessage('✅ All entries cleared successfully!');
+            }
         } catch (error) {
             console.error("Error clearing all entries:", error);
             showMessage('❌ Error clearing entries!');
@@ -424,18 +527,32 @@ const App = () => {
                 const data = JSON.parse(event.target.result);
                 if (Array.isArray(data) && userId) {
                     let imported = 0;
-                    for (const item of data) {
-                        const sanitizedItem = Object.fromEntries(
-                            Object.entries(item).filter(([key, value]) => 
-                                key !== 'id' && (typeof value === 'string' || typeof value === 'number')
-                            )
-                        );
-                        if (Object.keys(sanitizedItem).length > 0) {
-                            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
-                                ...sanitizedItem,
-                                importedAt: new Date().toISOString()
-                            });
-                            imported++;
+                    if (userId === 'local-user' || !db) {
+                        // Use localStorage fallback
+                        const importedEntries = data.map(item => ({
+                            ...item,
+                            id: Date.now() + Math.random(),
+                            importedAt: new Date().toISOString()
+                        }));
+                        const newEntries = [...entries, ...importedEntries];
+                        setEntries(newEntries);
+                        saveToStorage(newEntries);
+                        imported = importedEntries.length;
+                    } else {
+                        // Use Firebase
+                        for (const item of data) {
+                            const sanitizedItem = Object.fromEntries(
+                                Object.entries(item).filter(([key, value]) => 
+                                    key !== 'id' && (typeof value === 'string' || typeof value === 'number')
+                                )
+                            );
+                            if (Object.keys(sanitizedItem).length > 0) {
+                                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/entries`), {
+                                    ...sanitizedItem,
+                                    importedAt: new Date().toISOString()
+                                });
+                                imported++;
+                            }
                         }
                     }
                     showMessage(`✅ Successfully imported ${imported} entries!`);
